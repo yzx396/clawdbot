@@ -5,7 +5,195 @@ read_when:
 ---
 # Gateway architecture
 
-Last updated: 2026-01-05
+Last updated: 2026-01-11
+
+## System architecture diagram
+
+```
+┌─────────────────────────────────────────────────────────────────────────────────────┐
+│                                    CLAWDBOT                                         │
+│                              Personal AI Assistant                                  │
+└─────────────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────────────┐
+│                              MESSAGING PROVIDERS                                    │
+│                                                                                     │
+│   ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐   │
+│   │ WhatsApp │ │ Telegram │ │  Slack   │ │ Discord  │ │  Signal  │ │ iMessage │   │
+│   │ (Baileys)│ │ (grammY) │ │  (Bolt)  │ │(discord- │ │  (CLI)   │ │ (native) │   │
+│   │          │ │          │ │          │ │   js)    │ │          │ │          │   │
+│   └────┬─────┘ └────┬─────┘ └────┬─────┘ └────┬─────┘ └────┬─────┘ └────┬─────┘   │
+│        │            │            │            │            │            │         │
+│        └────────────┴────────────┴─────┬──────┴────────────┴────────────┘         │
+│                                        │                                           │
+│                                        ▼                                           │
+│  ┌─────────────────────────────────────────────────────────────────────────────┐  │
+│  │                         PROVIDER ADAPTERS                                    │  │
+│  │                    (src/providers/, src/{provider}/)                         │  │
+│  │                                                                              │  │
+│  │    Inbound handling · Outbound delivery · Media processing · Auth           │  │
+│  └──────────────────────────────────────┬──────────────────────────────────────┘  │
+└─────────────────────────────────────────┼───────────────────────────────────────────┘
+                                          │
+                                          ▼
+┌─────────────────────────────────────────────────────────────────────────────────────┐
+│                           GATEWAY (Control Plane)                                   │
+│                              (src/gateway/)                                         │
+│                                                                                     │
+│  ┌─────────────────────────────────────────────────────────────────────────────┐   │
+│  │                                                                              │   │
+│  │   ┌────────────┐  ┌────────────┐  ┌────────────┐  ┌────────────┐            │   │
+│  │   │  WS API    │  │   HTTP     │  │  OpenAI-   │  │  Control   │            │   │
+│  │   │  Server    │  │   REST     │  │  compat    │  │    UI      │            │   │
+│  │   │  :18789    │  │   API      │  │   API      │  │  (Web)     │            │   │
+│  │   └─────┬──────┘  └─────┬──────┘  └─────┬──────┘  └─────┬──────┘            │   │
+│  │         └───────────────┴───────────────┴───────────────┘                   │   │
+│  │                                    │                                         │   │
+│  │   ┌────────────────────────────────┴────────────────────────────────────┐   │   │
+│  │   │                      Core Services                                   │   │   │
+│  │   │                                                                      │   │   │
+│  │   │  ┌─────────────┐ ┌─────────────┐ ┌─────────────┐ ┌─────────────┐    │   │   │
+│  │   │  │   Router    │ │   Session   │ │   Config    │ │   Cron      │    │   │   │
+│  │   │  │  (routing)  │ │   Manager   │ │   Reload    │ │  Service    │    │   │   │
+│  │   │  └─────────────┘ └─────────────┘ └─────────────┘ └─────────────┘    │   │   │
+│  │   │                                                                      │   │   │
+│  │   │  ┌─────────────┐ ┌─────────────┐ ┌─────────────┐ ┌─────────────┐    │   │   │
+│  │   │  │  Provider   │ │   Bridge    │ │  Presence   │ │   Hooks     │    │   │   │
+│  │   │  │  Connector  │ │   (Nodes)   │ │  Tracker    │ │  (Webhooks) │    │   │   │
+│  │   │  └─────────────┘ └─────────────┘ └─────────────┘ └─────────────┘    │   │   │
+│  │   │                                                                      │   │   │
+│  │   └──────────────────────────────────────────────────────────────────────┘   │   │
+│  │                                                                              │   │
+│  └──────────────────────────────────────┬──────────────────────────────────────┘   │
+│                                         │                                           │
+└─────────────────────────────────────────┼───────────────────────────────────────────┘
+                                          │
+          ┌───────────────────────────────┼───────────────────────────────┐
+          │                               │                               │
+          ▼                               ▼                               ▼
+┌──────────────────────┐   ┌──────────────────────────────┐   ┌──────────────────────┐
+│    AGENT ENGINE      │   │         NODES                │   │    CLI & TOOLS       │
+│   (src/agents/)      │   │   (Bridge :18790)            │   │   (src/cli/)         │
+│                      │   │                              │   │                      │
+│ ┌──────────────────┐ │   │  ┌────────┐  ┌────────┐     │   │ ┌──────────────────┐ │
+│ │  Pi Embedded     │ │   │  │ macOS  │  │  iOS   │     │   │ │  Commands        │ │
+│ │   Runner         │ │   │  │  App   │  │  App   │     │   │ │  ─────────       │ │
+│ │                  │ │   │  └────────┘  └────────┘     │   │ │  gateway         │ │
+│ │  • Tool calling  │ │   │                              │   │ │  agent           │ │
+│ │  • Streaming     │ │   │  ┌────────┐  ┌────────┐     │   │ │  message send    │ │
+│ │  • Context mgmt  │ │   │  │Android │  │ WebChat│     │   │ │  configure       │ │
+│ │                  │ │   │  │  App   │  │        │     │   │ │  status          │ │
+│ └──────────────────┘ │   │  └────────┘  └────────┘     │   │ │  doctor          │ │
+│                      │   │                              │   │ │  sessions        │ │
+│ ┌──────────────────┐ │   │  Node Capabilities:          │   │ │  cron            │ │
+│ │  Tool Registry   │ │   │  • camera.capture            │   │ │  ...             │ │
+│ │                  │ │   │  • screen.record             │   │ └──────────────────┘ │
+│ │  • browser       │ │   │  • canvas.*                  │   │                      │
+│ │  • canvas        │ │   │  • location.get              │   │ ┌──────────────────┐ │
+│ │  • nodes         │ │   │  • audio.play                │   │ │  TUI             │ │
+│ │  • sessions      │ │   │  • talk mode                 │   │ │  (Interactive)   │ │
+│ │  • bash          │ │   │  • voice wake                │   │ └──────────────────┘ │
+│ │  • code sandbox  │ │   │                              │   │                      │
+│ └──────────────────┘ │   └──────────────────────────────┘   └──────────────────────┘
+│                      │
+│ ┌──────────────────┐ │
+│ │  Model Selection │ │
+│ │                  │ │
+│ │  • Anthropic     │ │
+│ │  • OpenAI        │ │
+│ │  • Gemini        │ │
+│ │  • Fallback      │ │
+│ └──────────────────┘ │
+└──────────────────────┘
+          │
+          ▼
+┌──────────────────────────────────────────────────────────────────────────────────────┐
+│                              INFRASTRUCTURE                                          │
+│                              (src/infra/)                                            │
+│                                                                                      │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌────────────┐ │
+│  │   Daemon    │  │  Bonjour    │  │  Sessions   │  │   Config    │  │   Media    │ │
+│  │  (launchd/  │  │  Discovery  │  │   Store     │  │   Parser    │  │ Processing │ │
+│  │  systemd)   │  │   (mDNS)    │  │   (JSONL)   │  │  (JSON5)    │  │  (Sharp)   │ │
+│  └─────────────┘  └─────────────┘  └─────────────┘  └─────────────┘  └────────────┘ │
+│                                                                                      │
+└──────────────────────────────────────────────────────────────────────────────────────┘
+          │
+          ▼
+┌──────────────────────────────────────────────────────────────────────────────────────┐
+│                              CANVAS HOST                                             │
+│                              (src/canvas-host/)                                      │
+│                                                                                      │
+│         ┌───────────────────────────────────────────────────────────────┐           │
+│         │                    A2UI Canvas (:18793)                        │           │
+│         │                                                                │           │
+│         │    Agent-driven visual workspace · Live HTML rendering         │           │
+│         │    Real-time WebSocket updates · Eval/snapshot/push            │           │
+│         └───────────────────────────────────────────────────────────────┘           │
+│                                                                                      │
+└──────────────────────────────────────────────────────────────────────────────────────┘
+
+
+                              ═══════════════════════
+                                  DATA FLOWS
+                              ═══════════════════════
+
+    ┌──────────────────────────────────────────────────────────────────────────────┐
+    │                           INBOUND MESSAGE FLOW                                │
+    │                                                                               │
+    │   Provider  ──▶  Adapter  ──▶  Gateway  ──▶  Router  ──▶  Agent  ──▶  Reply  │
+    │  (WhatsApp)    (auto-reply)   (server)   (resolve)    (Pi runner)  (provider)│
+    └──────────────────────────────────────────────────────────────────────────────┘
+
+    ┌──────────────────────────────────────────────────────────────────────────────┐
+    │                           OUTBOUND MESSAGE FLOW                               │
+    │                                                                               │
+    │   CLI/API  ──▶  Command  ──▶  Provider  ──▶  Adapter  ──▶  Delivery Tracking │
+    │   (send)      (handler)     (selector)    (outbound)                          │
+    └──────────────────────────────────────────────────────────────────────────────┘
+
+    ┌──────────────────────────────────────────────────────────────────────────────┐
+    │                           AGENT EXECUTION FLOW                                │
+    │                                                                               │
+    │   Trigger  ──▶  Context  ──▶  Model  ──▶  Reasoning  ──▶  Tools  ──▶  Result │
+    │  (message/      (setup)    (selection)  (streaming)    (browser,    (collect │
+    │   cron/hook)                                            canvas,     & deliver)│
+    │                                                         nodes...)             │
+    └──────────────────────────────────────────────────────────────────────────────┘
+
+
+                              ═══════════════════════
+                                 KEY DIRECTORIES
+                              ═══════════════════════
+
+    src/
+    ├── cli/            CLI wiring, parsers, progress UI
+    ├── commands/       Command implementations (agent, message, configure...)
+    ├── gateway/        Central control plane server
+    ├── agents/         Pi agent execution, tools, model selection
+    ├── providers/      Provider adapters and registry
+    ├── whatsapp/       WhatsApp-specific (Baileys)
+    ├── telegram/       Telegram-specific (grammY)
+    ├── slack/          Slack-specific (Bolt)
+    ├── discord/        Discord-specific (discord.js)
+    ├── signal/         Signal-specific (signal-cli)
+    ├── imessage/       iMessage-specific (native)
+    ├── config/         Config schema, validation
+    ├── sessions/       Session state (JSONL)
+    ├── infra/          Daemon, bonjour, ports, migrations
+    ├── canvas-host/    A2UI canvas server
+    ├── routing/        Route resolution
+    ├── cron/           Scheduled tasks
+    ├── hooks/          Webhook integrations
+    ├── media/          Media processing
+    └── terminal/       UI utilities, tables, theming
+
+    apps/
+    ├── macos/          SwiftUI menu bar app
+    ├── ios/            SwiftUI mobile app
+    ├── android/        Kotlin mobile app
+    └── shared/         Common Swift code (ClawdbotKit)
+```
 
 ## Overview
 
